@@ -19,10 +19,10 @@ Design and implement a system that takes MRI images and corresponding text descr
 ## 4. Methodology
 
 ### 4.1 Image Preprocessing Pipeline
-1. **Loading**: Read `.nii` files using `nibabel` and extract 2D axial slices.
-2. **Filtering**: Select slices with non-zero intensity profiles to ignore empty background slices.
-3. **Resizing & Normalization**: Resize slices and masks to $224 \times 224$ via OpenCV. Intensities are Min-Max normalized between `[0, 1]` to standardize contrast.
-4. **Binarization**: Masks are binarized (Tumor vs Background) for the primary segmentation objective.
+1. **Loading**: The notebook pipeline uses the `FLAIR_BRATS2020_split` preprocessed `.npy` slice dataset (image/mask pairs with matched filenames).
+2. **Patient-aware pairing**: Patient IDs are parsed from filenames and used to enforce strict patient-level image-text alignment (one report per patient, reused only for that patient's slices).
+3. **Resizing & Normalization**: Slices and masks are resized to $224 \times 224$ via OpenCV; image intensities are Min-Max normalized to `[0, 1]`.
+4. **Binarization**: Masks are binarized (Tumor vs Background) for primary segmentation training.
 
 ### 4.2 Text Preprocessing Pipeline
 1. **Tokenization**: Text strings are tokenized using `Bio_ClinicalBERT` (`emilyalsentzer/Bio_ClinicalBERT`), yielding `input_ids` and `attention_masks`.
@@ -31,7 +31,7 @@ Design and implement a system that takes MRI images and corresponding text descr
 ### 4.3 Model Architecture
 The network is a **Dual-Task Vision-Language Model (VLM-UNet)** consisting of:
 - **Text Encoder**: A pre-trained `ClinicalBERT` extracts a 768-dimensional sequential embedding and a global feature vector from the radiology report.
-- **Image Encoder**: A standard CNN-based Unet Encoder (ResNet backbone style) compresses the $224 \times 224$ input into a deep $512$-channel bottleneck representation.
+- **Image Encoder**: A CNN-based U-Net encoder (stacked convolution blocks with pooling) compresses the $224 \times 224$ input into a deep $512$-channel bottleneck representation.
 - **Cross-Modal Fusion (Attention Bottleneck)**: A Cross-Attention module sits at the bottleneck. Deep image features act as Queries, attending to the sequential text features (Keys/Values). This allows the vision network to structurally focus on regions described in the text.
 - **Segmentation Decoder**: A standard UNet decoder with skip-connections upsamples the fused features back to $224 \times 224$, outputting a pixel-wise probability map.
 - **Text Generation Decoder**: A Transformer Decoder takes the mean-pooled visual features as `memory` and autoregressively generates a radiology report text.
@@ -40,7 +40,8 @@ The network is a **Dual-Task Vision-Language Model (VLM-UNet)** consisting of:
 The network uses a multi-task joint optimization approach:
 1. **Segmentation Loss**: A combination of Binary Cross Entropy (BCE) and Soft Dice Loss.
 2. **Generation Loss**: Cross-Entropy Loss for next-token prediction via teacher forcing.
-3. **Alignment Loss**: A Cosine Embedding contrastive loss aligning the global text embedding with the global image embedding (similar to the CLIP objective).
+3. **Alignment Loss**: Cosine alignment loss between global text and image features.
+4. **Ablation mode**: A true image-only path (`use_text=False`) bypasses text fusion for controlled with-text vs without-text comparison.
 
 Total Loss = $L_{Seg} + 0.5 \cdot L_{Gen} + 0.1 \cdot L_{Align}$
 Optimizer: `AdamW` with learning rate $1 \times 10^{-4}$.
@@ -55,19 +56,19 @@ Optimizer: `AdamW` with learning rate $1 \times 10^{-4}$.
 - Side-by-side subplot panels showing: `[Input FLAIR] | [Ground Truth Mask] | [Predicted Mask] | [Overlay]`.
 
 ### 5.3 Attention / Explainability
-- Visualization of the Cross-Attention weights from the fusion bottleneck, resized and overlaid on the original image to act as a Grad-CAM equivalent, demonstrating which parts of the image the model focused on relative to the text.
+- Visualization of the Cross-Attention weights from the fusion bottleneck, resized and overlaid on the original image as a spatial attention map (gradient-based Grad-CAM is additionally implemented in `run_nb.py` Phase 4 analysis).
 
 ### 5.4 Ablation Study
-- The notebook allows bypassing the text input (providing empty padded tokens) to measure the performance drop, directly answering the requirement to compare "model without text input" vs "model with text input."
+- The notebook performs a true architecture-level ablation using `use_text=False` (no text fusion), and compares against the full multimodal (`use_text=True`) model using Dice and IoU bar plots.
 
 ### 5.5 Embedding Analysis
 - **t-SNE Projection**: A 2D scatter plot generated via `sklearn.manifold.TSNE` mapping the high-dimensional `global_text_feat` and `img_memory` points. Proper alignment shows text and corresponding image embeddings clustering together.
 
 ### 5.6 Error Analysis
-- Histogram of Dice Scores across the test set. Specific extraction of the bottom 5% (failure cases) visualized to diagnose poor edge detection or missing tiny tumors.
+- Histogram of Dice Scores across the validation set.
+- Worst-case qualitative panel (lowest Dice samples) with input, GT, prediction, and overlay views.
 
 ## 6. Evaluation Metrics
 The model is quantitatively evaluated using:
-- **Segmentation**: Dice Coefficient, Intersection over Union (IoU).
-- **Text Generation**: ROUGE (Rouge-1, Rouge-2, Rouge-L) and sentence BLEU score.
-*(Hausdorff Distance, Precision, and Recall functions are also extensible via the provided notebook skeleton).*
+- **Segmentation**: Dice Coefficient, Intersection over Union (IoU), Precision, Recall, and Hausdorff Distance.
+- **Text Generation**: ROUGE-1, ROUGE-L, and sentence BLEU.

@@ -11,37 +11,190 @@ text_cells = [
 ]
 
 code_cells = [
-    """# Install dependencies
+    """# Install dependencies (into whatever Python this notebook kernel uses)
 import subprocess, sys
-pkgs = ["kagglehub", "transformers", "rouge-score", "nltk", "nibabel", "opencv-python-headless", "tqdm", "scikit-learn"]
+
+if sys.platform == "win32":
+    subprocess.run(
+        [
+            sys.executable, "-m", "pip", "install", "-q",
+            "torch", "torchvision",
+            "--index-url", "https://download.pytorch.org/whl/cu124",
+        ],
+        check=False,
+    )
+else:
+    subprocess.run(
+        [sys.executable, "-m", "pip", "install", "-q", "torch", "torchvision"],
+        check=False,
+    )
+
+pkgs = [
+    "kagglehub", "gdown", "transformers", "rouge-score", "nltk", "nibabel",
+    "opencv-python-headless", "tqdm", "scikit-learn",
+]
 for p in pkgs:
     subprocess.run([sys.executable, "-m", "pip", "install", "-q", p], check=False)
 print("All dependencies ready.")""",
     
     """import os, sys, glob
-import kagglehub
 
-# ── Download / locate pre-processed BraTS 2020 FLAIR dataset (2D .npy slices) ──
-print("Locating BraTS 2020 FLAIR dataset…")
-KAGGLE_PATH = kagglehub.dataset_download("hussainnasirkhan/flair-brats2020")
-print("Dataset root:", KAGGLE_PATH)
+# Prefer local FLAIR_BRATS2020_split (train/images + train/masks, *.npy).
+# Optional: set FLAIR_BRATS_ROOT to the folder that CONTAINS FLAIR_BRATS2020_split,
+# or to the FLAIR_BRATS2020_split folder itself.
+# If nothing local matches, falls back to kagglehub download.
 
-IMAGE_DIR = os.path.join(KAGGLE_PATH, "FLAIR_BRATS2020_split", "train", "images")
-MASK_DIR  = os.path.join(KAGGLE_PATH, "FLAIR_BRATS2020_split", "train", "masks")
 
-# ── Text dataset (TextBraTSData folder alongside this notebook) ──
-NOTEBOOK_DIR = os.getcwd()
-TEXT_DIR = os.path.join(NOTEBOOK_DIR, "TextBraTSData")
+def _has_npy_pair(img_dir, msk_dir):
+    if not (os.path.isdir(img_dir) and os.path.isdir(msk_dir)):
+        return False
+    return bool(glob.glob(os.path.join(img_dir, "*.npy"))) and bool(
+        glob.glob(os.path.join(msk_dir, "*.npy"))
+    )
+
+
+def _resolve_flair_npy_dirs():
+    rel_img = os.path.join("FLAIR_BRATS2020_split", "train", "images")
+    rel_msk = os.path.join("FLAIR_BRATS2020_split", "train", "masks")
+
+    def try_roots(base, label):
+        base = os.path.abspath(base)
+        idir = os.path.join(base, rel_img)
+        mdir = os.path.join(base, rel_msk)
+        if _has_npy_pair(idir, mdir):
+            return idir, mdir, f"{label}:{base}"
+        # base might already be .../FLAIR_BRATS2020_split
+        if os.path.basename(base.rstrip("\\/")) == "FLAIR_BRATS2020_split":
+            idir = os.path.join(base, "train", "images")
+            mdir = os.path.join(base, "train", "masks")
+            if _has_npy_pair(idir, mdir):
+                return idir, mdir, f"{label}(split):{base}"
+        return None, None, None
+
+    env = os.environ.get("FLAIR_BRATS_ROOT") or os.environ.get("FLAIR_DATA_ROOT")
+    if env:
+        env = os.path.abspath(env.strip().strip('"').strip("'"))
+        out = try_roots(env, "env")
+        if out[0]:
+            return out
+
+    # Your machine: FLAIR split lives under this repo (edit/remove on other PCs or Colab).
+    for pb in (
+        r"C:\Users\theni\OneDrive\Desktop\New folder\BRAIN_TUMOR_SEGMENTATION_USING_CLIP_ARCHITECTURE\FLAIR_BRATS2020_split",
+        r"C:\Users\theni\OneDrive\Desktop\New folder\BRAIN_TUMOR_SEGMENTATION_USING_CLIP_ARCHITECTURE",
+    ):
+        if os.path.isdir(pb):
+            out = try_roots(pb, "pinned")
+            if out[0]:
+                return out
+
+    here = os.path.abspath(os.getcwd())
+    repo = "BRAIN_TUMOR_SEGMENTATION_USING_CLIP_ARCHITECTURE"
+    roots = [
+        here,
+        os.path.dirname(here),
+        os.path.join(here, repo),
+        os.path.join(os.path.dirname(here), repo),
+    ]
+    seen = set()
+    for base in roots:
+        base = os.path.abspath(base)
+        if base in seen:
+            continue
+        seen.add(base)
+        out = try_roots(base, "local")
+        if out[0]:
+            return out
+    return None, None, None
+
+
+print("Locating BraTS 2020 FLAIR (.npy split)...")
+IMAGE_DIR, MASK_DIR, flair_src = _resolve_flair_npy_dirs()
+KAGGLE_PATH = None
+
+if IMAGE_DIR is None:
+    import kagglehub
+
+    print("Local FLAIR_BRATS2020_split not found -- downloading via kagglehub...")
+    KAGGLE_PATH = kagglehub.dataset_download("hussainnasirkhan/flair-brats2020")
+    print("Dataset root:", KAGGLE_PATH)
+    IMAGE_DIR = os.path.join(KAGGLE_PATH, "FLAIR_BRATS2020_split", "train", "images")
+    MASK_DIR = os.path.join(KAGGLE_PATH, "FLAIR_BRATS2020_split", "train", "masks")
+else:
+    print("Using local FLAIR .npy data:", flair_src)
+
+
+def _resolve_text_brats_dir():
+    env = os.environ.get("TEXT_BRA_TS_DATA") or os.environ.get("TEXT_DIR")
+    if env:
+        env = os.path.abspath(env.strip().strip('"').strip("'"))
+        if os.path.isdir(env) and glob.glob(os.path.join(env, "**", "*.txt"), recursive=True):
+            return env
+    repo = "BRAIN_TUMOR_SEGMENTATION_USING_CLIP_ARCHITECTURE"
+    here = os.path.abspath(os.getcwd())
+    for c in (
+        os.path.join(here, "TextBraTSData"),
+        os.path.join(here, repo, "TextBraTSData"),
+        os.path.join(os.path.dirname(here), repo, "TextBraTSData"),
+        "/content/TextBraTSData",
+        os.path.join("/content", "drive", "MyDrive", "TextBraTSData"),
+    ):
+        if os.path.isdir(c) and glob.glob(os.path.join(c, "**", "*.txt"), recursive=True):
+            return c
+    return None
+
+
+TEXT_DIR = _resolve_text_brats_dir()
+TEXT_GDRIVE_FILE_ID = "17YKI4nwPW8qMKlg9k53dVax7F_1JCk9B"
+
+
+def _download_text_brats_from_gdrive():
+    try:
+        import zipfile
+        import gdown
+    except Exception:
+        return None
+
+    base = "/content" if os.path.isdir("/content") else os.getcwd()
+    zip_path = os.path.join(base, "text_brats.zip")
+    out_dir = os.path.join(base, "TextBraTSData")
+    os.makedirs(out_dir, exist_ok=True)
+
+    if not glob.glob(os.path.join(out_dir, "**", "*.txt"), recursive=True):
+        url = f"https://drive.google.com/uc?id={TEXT_GDRIVE_FILE_ID}"
+        print("TextBraTSData not found locally. Downloading from Google Drive...")
+        gdown.download(url, zip_path, quiet=False)
+        with zipfile.ZipFile(zip_path, "r") as zf:
+            zf.extractall(out_dir)
+
+    if glob.glob(os.path.join(out_dir, "**", "*.txt"), recursive=True):
+        return out_dir
+    return None
+
+
+if TEXT_DIR is None:
+    TEXT_DIR = _download_text_brats_from_gdrive()
+
+if TEXT_DIR is None:
+    raise RuntimeError(
+        "TextBraTSData not found/downloaded (no **/*.txt). Options:\n"
+        "  - Place TextBraTSData inside the repo folder next to this notebook, OR\n"
+        "  - cd into BRAIN_TUMOR_SEGMENTATION_USING_CLIP_ARCHITECTURE before running cells, OR\n"
+        "  - Colab: unzip to /content/TextBraTSData, OR\n"
+        "  - Set TEXT_BRA_TS_DATA to the folder tree that contains **/*.txt, OR\n"
+        "  - Ensure the provided Google Drive link is accessible from this runtime.\n"
+        f"  cwd={os.getcwd()}"
+    )
 
 print(f"IMAGE_DIR  : {IMAGE_DIR}  | exists={os.path.exists(IMAGE_DIR)}")
 print(f"MASK_DIR   : {MASK_DIR}   | exists={os.path.exists(MASK_DIR)}")
 print(f"TEXT_DIR   : {TEXT_DIR}   | exists={os.path.exists(TEXT_DIR)}")
 
-# Quick sanity counts
-n_img  = len(glob.glob(os.path.join(IMAGE_DIR, "*.npy")))
-n_mask = len(glob.glob(os.path.join(MASK_DIR,  "*.npy")))
-n_txt  = len(glob.glob(os.path.join(TEXT_DIR, "**", "*.txt"), recursive=True))
-print(f"Found {n_img} image slices, {n_mask} mask slices, {n_txt} text reports")"""
+n_img = len(glob.glob(os.path.join(IMAGE_DIR, "*.npy")))
+n_mask = len(glob.glob(os.path.join(MASK_DIR, "*.npy")))
+n_txt = len(glob.glob(os.path.join(TEXT_DIR, "**", "*.txt"), recursive=True))
+print(f"Found {n_img} image slices, {n_mask} mask slices, {n_txt} text reports")
+"""
 ]
 
 text_cells.append("## 2. Dataset & DataLoader")
