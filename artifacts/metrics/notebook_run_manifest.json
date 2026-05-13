@@ -1,0 +1,15 @@
+{
+  "timestamp_utc": "2026-05-13T09:43:55.626858+00:00",
+  "python": "3.11.9",
+  "platform": "Windows-10-10.0.26200-SP0",
+  "torch_version": "2.9.1+cpu",
+  "cuda_available": false,
+  "cwd": "c:\\Users\\sreek\\OneDrive\\Desktop\\ACADS-ASSIGNS\\DL\\BRAIN_TUMOR_SEGMENTATION_CLIP_ARCH",
+  "env_overrides": {
+    "VLM_FINAL_EPOCHS": "10",
+    "VLM_RUN_SEED": "42",
+    "FLAIR_BRATS_ROOT": "/kaggle/input/flair-brats2020",
+    "TEXT_BRA_TS_DATA": "/content/TextBraTSData"
+  },
+  "training_hyperparams_note": "Final defaults in notebook: BATCH=4, lr=1e-4 (AdamW, weight_decay=1e-2), EPOCHS from VLM_FINAL_EPOCHS or 10, seed from VLM_RUN_SEED or 42."
+}
