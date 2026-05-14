@@ -1,0 +1,13 @@
+torch>=2.4.0
+torchvision
+kagglehub
+gdown
+transformers
+rouge-score
+nltk
+nibabel
+opencv-python-headless
+tqdm
+scikit-learn
+scipy
+matplotlib
